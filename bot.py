@@ -247,15 +247,16 @@ def subscribe_kb() -> InlineKeyboardMarkup:
     buttons.append([InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-
 async def build_mylink_text(user_id: int) -> str:
     bot_username = await get_bot_username()
     ref_link = f"https://t.me/{bot_username}?start=ref{user_id}"
-    return (
-        f"🔗 Твоя реферальная ссылка:\n<code>{ref_link}</code>\n\n"
-        f"Пригласи {REQUIRED_REFERRALS} друга(ей), чтобы получить доступ на {LINK_DURATION_DAYS} дн."
-    )
 
+    return (
+        f"🔗 Твоя ссылка:\n\n"
+        f"<code>{ref_link}</code>\n\n"
+        f"👥 Пригласи {REQUIRED_REFERRALS} друга(ей)\n"
+        f"🎁 Получишь VPN на {LINK_DURATION_DAYS} дня"
+    )
 
 async def build_status_text(user_id: int, username: str) -> str:
     row = get_user(user_id)
@@ -354,9 +355,16 @@ async def cb_mylink(callback: CallbackQuery):
     if get_user(user_id) is None:
         create_user(user_id, callback.from_user.username or callback.from_user.full_name, None)
     text = await build_mylink_text(user_id)
-    await callback.message.edit_text(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
-    await callback.answer()
-
+    await callback.message.edit_text(text,reply_markup=InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="back_menu"
+            )
+        ]
+    ]
+)
 
 @dp.callback_query(F.data == "status")
 async def cb_status(callback: CallbackQuery):
@@ -374,11 +382,46 @@ async def cb_get_vpn(callback: CallbackQuery):
     if get_user(user_id) is None:
         create_user(user_id, username, None)
 
-    text = await build_status_text(user_id, username)
+    row = get_user(user_id)
+
+    link, remaining = link_status(row)
+
+    if link:
+        text = (
+            "🎁 Твой VPN уже готов!\n\n"
+            f"⏳ Осталось: {fmt_timedelta(remaining)}\n\n"
+            f"🔗 Ссылка:\n<code>{link}</code>"
+        )
+    else:
+        needed = max(REQUIRED_REFERRALS - row["referral_count"], 0)
+
+        text = (
+            "🎁 Получение VPN\n\n"
+            f"👥 Приглашено друзей: {row['referral_count']}/{REQUIRED_REFERRALS}\n\n"
+            f"📌 Осталось пригласить: {needed}\n\n"
+            "Используй свою ссылку ниже 👇"
+        )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔗 Моя ссылка",
+                    callback_data="mylink"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data="back_menu"
+                )
+            ]
+        ]
+    )
 
     await callback.message.edit_text(
-        "🎁 Получение VPN\n\n" + text,
-        reply_markup=main_menu_kb(),
+        text,
+        reply_markup=keyboard,
         disable_web_page_preview=True
     )
 
