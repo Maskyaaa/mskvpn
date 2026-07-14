@@ -355,7 +355,7 @@ async def cb_mylink(callback: CallbackQuery):
     if get_user(user_id) is None:
         create_user(user_id, callback.from_user.username or callback.from_user.full_name, None)
     text = await build_mylink_text(user_id)
-    await callback.message.edit_text(text,reply_markup=InlineKeyboardMarkup(
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(
     inline_keyboard=[
         [
             InlineKeyboardButton(
