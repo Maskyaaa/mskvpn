@@ -190,12 +190,53 @@ async def is_subscribed(user_id: int) -> bool:
 
 def main_menu_kb() -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(text="📊 Мой статус", callback_data="status")],
-        [InlineKeyboardButton(text="🔗 Моя ссылка", callback_data="mylink")],
+        [
+            InlineKeyboardButton(
+                text="🎁 Получить VPN",
+                callback_data="get_vpn"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📊 Мой статус",
+                callback_data="status"
+            ),
+            InlineKeyboardButton(
+                text="🔗 Моя ссылка",
+                callback_data="mylink"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📱 Как подключить VPN",
+                callback_data="how_connect"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🆘 Поддержка",
+                callback_data="support"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="💛 Поддержать проект",
+                callback_data="donate"
+            )
+        ],
     ]
+
     if NEWS_CHANNEL_URL:
-        buttons.append([InlineKeyboardButton(text="📰 Новости канала", url=NEWS_CHANNEL_URL)])
-    buttons.append([InlineKeyboardButton(text="💛 Поддержать автора", callback_data="donate")])
+        buttons.insert(
+            4,
+            [
+                InlineKeyboardButton(
+                    text="📰 Новости канала",
+                    url=NEWS_CHANNEL_URL
+                )
+            ]
+        )
+
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
