@@ -366,6 +366,44 @@ async def cb_status(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
     await callback.answer()
 
+@dp.callback_query(F.data == "how_connect")
+async def cb_how_connect(callback: CallbackQuery):
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🍎 iPhone",
+                    callback_data="connect_iphone"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🤖 Android",
+                    callback_data="connect_android"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💻 Windows",
+                    callback_data="connect_windows"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data="back_menu"
+                )
+            ],
+        ]
+    )
+
+    await callback.message.edit_text(
+        "📱 Как подключить VPN\n\n"
+        "Выбери своё устройство:",
+        reply_markup=keyboard
+    )
+
+    await callback.answer()
 
 @dp.callback_query(F.data == "check_sub")
 async def cb_check_sub(callback: CallbackQuery):
