@@ -405,6 +405,70 @@ async def cb_how_connect(callback: CallbackQuery):
 
     await callback.answer()
 
+@dp.callback_query(F.data == "connect_iphone")
+async def cb_connect_iphone(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "🍎 Подключение VPN на iPhone\n\n"
+        "1️⃣ Установи приложение Hiddify или Streisand\n\n"
+        "2️⃣ Скопируй VLESS-ссылку, которую выдаст бот\n\n"
+        "3️⃣ Открой приложение\n\n"
+        "4️⃣ Нажми ➕ и выбери импорт из буфера обмена\n\n"
+        "5️⃣ Включи подключение ✅",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Назад",
+                        callback_data="how_connect"
+                    )
+                ]
+            ]
+        )
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "connect_android")
+async def cb_connect_android(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "🤖 Подключение VPN на Android\n\n"
+        "1️⃣ Установи приложение v2rayNG или Hiddify\n\n"
+        "2️⃣ Скопируй VLESS-ссылку\n\n"
+        "3️⃣ Импортируй ссылку в приложение\n\n"
+        "4️⃣ Нажми подключить ✅",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Назад",
+                        callback_data="how_connect"
+                    )
+                ]
+            ]
+        )
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "connect_windows")
+async def cb_connect_windows(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "💻 Подключение VPN на Windows\n\n"
+        "1️⃣ Установи Hiddify или Nekoray\n\n"
+        "2️⃣ Добавь VLESS-ссылку\n\n"
+        "3️⃣ Включи подключение ✅",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Назад",
+                        callback_data="how_connect"
+                    )
+                ]
+            ]
+        )
+    )
+    await callback.answer()
+
 @dp.callback_query(F.data == "check_sub")
 async def cb_check_sub(callback: CallbackQuery):
     user_id = callback.from_user.id
