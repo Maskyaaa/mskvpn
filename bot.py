@@ -366,6 +366,14 @@ async def cb_status(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
     await callback.answer()
 
+@dp.callback_query(F.data == "back_menu")
+async def cb_back_menu(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "🏠 Главное меню",
+        reply_markup=main_menu_kb()
+    )
+    await callback.answer()
+
 @dp.callback_query(F.data == "how_connect")
 async def cb_how_connect(callback: CallbackQuery):
     keyboard = InlineKeyboardMarkup(
@@ -495,6 +503,26 @@ async def cb_donate(callback: CallbackQuery):
         provider_token="",  # для Stars токен не нужен
     )
 
+@dp.callback_query(F.data == "support")
+async def cb_support(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "🆘 Поддержка\n\n"
+        "Если возникли проблемы с подключением VPN:\n\n"
+        "Напишите нам:\n"
+        "@ТВОЙ_USERNAME\n\n"
+        "Мы поможем разобраться ❤️",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Назад",
+                        callback_data="back_menu"
+                    )
+                ]
+            ]
+        )
+    )
+    await callback.answer()
 
 @dp.pre_checkout_query()
 async def process_pre_checkout(pre_checkout_q: PreCheckoutQuery):
