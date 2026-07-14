@@ -366,6 +366,24 @@ async def cb_status(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
     await callback.answer()
 
+@dp.callback_query(F.data == "get_vpn")
+async def cb_get_vpn(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.full_name
+
+    if get_user(user_id) is None:
+        create_user(user_id, username, None)
+
+    text = await build_status_text(user_id, username)
+
+    await callback.message.edit_text(
+        "🎁 Получение VPN\n\n" + text,
+        reply_markup=main_menu_kb(),
+        disable_web_page_preview=True
+    )
+
+    await callback.answer()
+
 @dp.callback_query(F.data == "back_menu")
 async def cb_back_menu(callback: CallbackQuery):
     await callback.message.edit_text(
