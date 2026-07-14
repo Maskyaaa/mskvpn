@@ -6,7 +6,14 @@ from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    LabeledPrice,
+    PreCheckoutQuery,
+)
 from aiogram.client.default import DefaultBotProperties
 
 # ========== НАСТРОЙКИ ==========
@@ -15,6 +22,12 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "ВСТАВЬ_СВОЙ_TELEG
 REQUIRED_REFERRALS = int(os.getenv("REQUIRED_REFERRALS", "1"))   # сколько друзей нужно пригласить за 1 ссылку
 LINK_DURATION_DAYS = int(os.getenv("LINK_DURATION_DAYS", "2"))  # на сколько дней выдаётся ссылка
 DB_PATH = os.getenv("DB_PATH", "vpnbot.db")
+
+# Новостной канал (необязательно). Если указан NEWS_CHANNEL_ID — бот будет
+# требовать подписку на канал перед выдачей ссылки. Бот должен быть админом канала.
+NEWS_CHANNEL_URL = os.getenv("NEWS_CHANNEL_URL", "")   # например https://t.me/my_channel
+NEWS_CHANNEL_ID = os.getenv("NEWS_CHANNEL_ID", "")     # например @my_channel или -1001234567890
+REQUIRE_SUBSCRIPTION = bool(NEWS_CHANNEL_ID)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -129,6 +142,15 @@ def total_users() -> int:
     return row["c"]
 
 
+def get_all_users(limit: int = 50, offset: int = 0):
+    conn = db()
+    rows = conn.execute(
+        "SELECT * FROM users ORDER BY joined_at DESC LIMIT ? OFFSET ?", (limit, offset)
+    ).fetchall()
+    conn.close()
+    return rows
+
+
 # ========== ВСПОМОГАТЕЛЬНОЕ ==========
 def link_status(user_row) -> tuple[str | None, timedelta | None]:
     """Возвращает (ссылка, оставшееся_время) если ссылка ещё активна, иначе (None, None)."""
@@ -151,6 +173,82 @@ def fmt_timedelta(td: timedelta) -> str:
 async def get_bot_username() -> str:
     me = await bot.get_me()
     return me.username
+
+
+async def is_subscribed(user_id: int) -> bool:
+    """Проверяет подписку пользователя на новостной канал. Если канал не настроен — считаем, что подписка не нужна."""
+    if not REQUIRE_SUBSCRIPTION:
+        return True
+    try:
+        member = await bot.get_chat_member(chat_id=NEWS_CHANNEL_ID, user_id=user_id)
+        return member.status in ("member", "administrator", "creator")
+    except Exception:
+        # если бот не админ канала или ID неверный — не блокируем пользователей из-за ошибки настройки
+        logging.warning("Не удалось проверить подписку на канал, пропускаем проверку")
+        return True
+
+
+def main_menu_kb() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="📊 Мой статус", callback_data="status")],
+        [InlineKeyboardButton(text="🔗 Моя ссылка", callback_data="mylink")],
+    ]
+    if NEWS_CHANNEL_URL:
+        buttons.append([InlineKeyboardButton(text="📰 Новости канала", url=NEWS_CHANNEL_URL)])
+    buttons.append([InlineKeyboardButton(text="💛 Поддержать автора", callback_data="donate")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def subscribe_kb() -> InlineKeyboardMarkup:
+    buttons = []
+    if NEWS_CHANNEL_URL:
+        buttons.append([InlineKeyboardButton(text="📰 Подписаться на канал", url=NEWS_CHANNEL_URL)])
+    buttons.append([InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+async def build_mylink_text(user_id: int) -> str:
+    bot_username = await get_bot_username()
+    ref_link = f"https://t.me/{bot_username}?start=ref{user_id}"
+    return (
+        f"🔗 Твоя реферальная ссылка:\n<code>{ref_link}</code>\n\n"
+        f"Пригласи {REQUIRED_REFERRALS} друга(ей), чтобы получить доступ на {LINK_DURATION_DAYS} дн."
+    )
+
+
+async def build_status_text(user_id: int, username: str) -> str:
+    row = get_user(user_id)
+    if row is None:
+        create_user(user_id, username, None)
+        row = get_user(user_id)
+
+    link, remaining = link_status(row)
+    if link:
+        return f"✅ Твоя ссылка активна ещё {fmt_timedelta(remaining)}:\n<code>{link}</code>"
+
+    if row["current_link"]:
+        clear_expired_link(user_id)
+
+    needed = max(REQUIRED_REFERRALS - row["referral_count"], 0)
+    subscribed = await is_subscribed(user_id)
+
+    if needed > 0:
+        text = (
+            f"📊 Приглашено друзей: {row['referral_count']}/{REQUIRED_REFERRALS}\n"
+            f"Ещё нужно: {needed}, чтобы получить доступ на {LINK_DURATION_DAYS} дн."
+        )
+        if REQUIRE_SUBSCRIPTION and not subscribed:
+            text += "\n\n📰 И не забудь подписаться на канал — это тоже обязательное условие."
+        return text
+
+    if REQUIRE_SUBSCRIPTION and not subscribed:
+        return (
+            "📰 Друзья приглашены! Осталось подписаться на новостной канал, "
+            "чтобы получить доступ."
+        )
+
+    await try_auto_issue(user_id)
+    return "🎁 Все условия выполнены! Держи новую ссылку — нажми «Мой статус» ещё раз."
 
 
 # ========== ХЕНДЛЕРЫ ==========
@@ -184,18 +282,12 @@ async def cmd_start(message: Message):
             pass
         await try_auto_issue(referred_by)
 
-    bot_username = await get_bot_username()
-    ref_link = f"https://t.me/{bot_username}?start=ref{user_id}"
+    greeting = "👋 Привет! Здесь можно получить доступ бесплатно — просто пригласи друзей."
+    if REQUIRE_SUBSCRIPTION:
+        greeting += " И не забудь подписаться на наш новостной канал 📰"
+    greeting += "\n\nНажми на кнопку ниже 👇"
 
-    await message.answer(
-        "👋 Привет! Это бот для получения VPN-ссылок.\n\n"
-        f"Чтобы получить доступ, пригласи {REQUIRED_REFERRALS} друга(ей) по своей ссылке:\n"
-        f"<code>{ref_link}</code>\n\n"
-        "Команды:\n"
-        "/mylink — получить ссылку для приглашений\n"
-        "/status — проверить статус (сколько друзей приглашено, активна ли VPN-ссылка)",
-        disable_web_page_preview=True,
-    )
+    await message.answer(greeting, reply_markup=main_menu_kb())
 
 
 @dp.message(Command("mylink"))
@@ -203,69 +295,106 @@ async def cmd_mylink(message: Message):
     user_id = message.from_user.id
     if get_user(user_id) is None:
         create_user(user_id, message.from_user.username or message.from_user.full_name, None)
-
-    bot_username = await get_bot_username()
-    ref_link = f"https://t.me/{bot_username}?start=ref{user_id}"
-    await message.answer(
-        f"🔗 Твоя реферальная ссылка:\n<code>{ref_link}</code>\n\n"
-        f"Пригласи {REQUIRED_REFERRALS} друга(ей), чтобы получить VPN-доступ на {LINK_DURATION_DAYS} дн.",
-        disable_web_page_preview=True,
-    )
+    text = await build_mylink_text(user_id)
+    await message.answer(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
 
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message):
     user_id = message.from_user.id
-    row = get_user(user_id)
-    if row is None:
-        create_user(user_id, message.from_user.username or message.from_user.full_name, None)
-        row = get_user(user_id)
+    username = message.from_user.username or message.from_user.full_name
+    text = await build_status_text(user_id, username)
+    await message.answer(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
 
-    link, remaining = link_status(row)
-    if link:
-        await message.answer(
-            f"✅ Твоя VPN-ссылка активна ещё {fmt_timedelta(remaining)}:\n<code>{link}</code>",
-            disable_web_page_preview=True,
-        )
+
+@dp.callback_query(F.data == "mylink")
+async def cb_mylink(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if get_user(user_id) is None:
+        create_user(user_id, callback.from_user.username or callback.from_user.full_name, None)
+    text = await build_mylink_text(user_id)
+    await callback.message.edit_text(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "status")
+async def cb_status(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.full_name
+    text = await build_status_text(user_id, username)
+    await callback.message.edit_text(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "check_sub")
+async def cb_check_sub(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.full_name
+    if await is_subscribed(user_id):
+        await callback.answer("✅ Подписка подтверждена!", show_alert=True)
+        await try_auto_issue(user_id)
+        text = await build_status_text(user_id, username)
+        await callback.message.edit_text(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
     else:
-        if row["current_link"]:
-            clear_expired_link(user_id)
-        needed = max(REQUIRED_REFERRALS - row["referral_count"], 0)
-        if needed == 0:
-            await try_auto_issue(user_id)
-            await message.answer("🎁 У тебя достаточно приглашений! Держи новую ссылку — набери /status ещё раз.")
-        else:
-            await message.answer(
-                f"📊 Приглашено друзей: {row['referral_count']}/{REQUIRED_REFERRALS}\n"
-                f"Ещё нужно: {needed}, чтобы получить VPN-ссылку на {LINK_DURATION_DAYS} дн."
-            )
+        await callback.answer("❌ Пока не вижу твою подписку. Подпишись и попробуй снова.", show_alert=True)
+
+
+@dp.callback_query(F.data == "donate")
+async def cb_donate(callback: CallbackQuery):
+    await callback.answer()
+    await bot.send_invoice(
+        chat_id=callback.from_user.id,
+        title="Поддержать автора",
+        description="Спасибо, что пользуешься ботом! Этот донат — просто способ сказать спасибо 💛",
+        payload="donate_1_star",
+        currency="XTR",  # Telegram Stars
+        prices=[LabeledPrice(label="Донат", amount=1)],  # 1 звезда
+        provider_token="",  # для Stars токен не нужен
+    )
+
+
+@dp.pre_checkout_query()
+async def process_pre_checkout(pre_checkout_q: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout_q.id, ok=True)
+
+
+@dp.message(F.successful_payment)
+async def process_successful_payment(message: Message):
+    await message.answer("💛 Спасибо большое за поддержку! Это правда приятно.")
 
 
 async def try_auto_issue(user_id: int):
-    """Если у пользователя достаточно рефералов и нет активной ссылки — выдать новую из пула."""
+    """Если у пользователя достаточно рефералов, он подписан на канал (если требуется)
+    и нет активной ссылки — выдать новую из пула."""
     row = get_user(user_id)
     if row is None:
         return
     active_link, remaining = link_status(row)
     if active_link:
         return  # уже есть активная
-    if row["referral_count"] >= REQUIRED_REFERRALS:
-        new_link = pop_link_from_pool()
-        if new_link:
-            issue_link_to_user(user_id, new_link)
-            try:
-                await bot.send_message(
-                    user_id,
-                    f"🎁 Тебе выдана новая VPN-ссылка (действует {LINK_DURATION_DAYS} дн.):\n<code>{new_link}</code>",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                pass
-        else:
-            try:
-                await bot.send_message(user_id, "⏳ Все условия выполнены, но ссылки закончились. Как только админ добавит новые — ты получишь одну автоматически.")
-            except Exception:
-                pass
+
+    if row["referral_count"] < REQUIRED_REFERRALS:
+        return
+
+    if REQUIRE_SUBSCRIPTION and not await is_subscribed(user_id):
+        return
+
+    new_link = pop_link_from_pool()
+    if new_link:
+        issue_link_to_user(user_id, new_link)
+        try:
+            await bot.send_message(
+                user_id,
+                f"🎁 Тебе выдана новая VPN-ссылка (действует {LINK_DURATION_DAYS} дн.):\n<code>{new_link}</code>",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            pass
+    else:
+        try:
+            await bot.send_message(user_id, "⏳ Все условия выполнены, но ссылки закончились. Как только админ добавит новые — ты получишь одну автоматически.")
+        except Exception:
+            pass
 
 
 # ========== АДМИН-КОМАНДЫ ==========
@@ -311,6 +440,35 @@ async def cmd_stats(message: Message):
         f"Нужно рефералов за ссылку: {REQUIRED_REFERRALS}\n"
         f"Срок действия ссылки: {LINK_DURATION_DAYS} дн."
     )
+
+
+@dp.message(Command("users"))
+async def cmd_users(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    args = message.text.split()
+    page = int(args[1]) if len(args) > 1 and args[1].isdigit() else 1
+    per_page = 20
+    offset = (page - 1) * per_page
+
+    rows = get_all_users(limit=per_page, offset=offset)
+    if not rows:
+        await message.answer("Пользователей на этой странице нет.")
+        return
+
+    lines = [f"👥 Пользователи (стр. {page}), всего: {total_users()}\n"]
+    for row in rows:
+        link, remaining = link_status(row)
+        uname = f"@{row['username']}" if row["username"] and not row["username"].isdigit() else row["username"] or "—"
+        status = f"🟢 ссылка активна ({fmt_timedelta(remaining)})" if link else "⚪ нет активной ссылки"
+        lines.append(
+            f"• <code>{row['user_id']}</code> {uname}\n"
+            f"  рефералов: {row['referral_count']} | {status}"
+        )
+
+    lines.append(f"\nСледующая страница: /users {page + 1}")
+    await message.answer("\n".join(lines), disable_web_page_preview=True)
 
 
 @dp.message(Command("setrequired"))
