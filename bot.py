@@ -348,26 +348,35 @@ async def cmd_status(message: Message):
     text = await build_status_text(user_id, username)
     await message.answer(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
 
-
 @dp.callback_query(F.data == "mylink")
 async def cb_mylink(callback: CallbackQuery):
     user_id = callback.from_user.id
+
     if get_user(user_id) is None:
-        create_user(user_id, callback.from_user.username or callback.from_user.full_name, None)
+        create_user(
+            user_id,
+            callback.from_user.username or callback.from_user.full_name,
+            None
+        )
+
     text = await build_mylink_text(user_id)
-await callback.message.edit_text(
-    text,
-    reply_markup=InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data="back_menu"
-                )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Назад",
+                        callback_data="back_menu"
+                    )
+                ]
             ]
-        ]
+        ),
+        disable_web_page_preview=True
     )
-)
+
+    await callback.answer()
 
 @dp.callback_query(F.data == "status")
 async def cb_status(callback: CallbackQuery):
