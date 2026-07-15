@@ -418,22 +418,29 @@ async def cb_status(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "get_vpn")
 async def cb_get_vpn(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    username = callback.from_user.username or callback.from_user.full_name
 
-    if get_user(user_id) is None:
-        create_user(user_id, username, None)
+    row = get_user(callback.from_user.id)
 
-    row = get_user(user_id)
+    if row["referral_count"] < REQUIRED_REFERRALS:
 
-    link, remaining = link_status(row)
+        left = REQUIRED_REFERRALS - row["referral_count"]
 
-    if link:
-        text = (
-            "🎁 Твой VPN уже готов!\n\n"
-            f"⏳ Осталось: {fmt_timedelta(remaining)}\n\n"
-            f"🔗 Ссылка:\n<code>{link}</code>"
+        await callback.answer()
+
+        await callback.message.edit_text(
+            f"🎁 Получение VPN\n\n"
+            f"❌ Пока недостаточно приглашений.\n\n"
+            f"👥 Приглашено: {row['referral_count']}/{REQUIRED_REFERRALS}\n"
+            f"📈 Осталось: {left}",
+            reply_markup=main_menu_kb()
         )
+
+        return
+
+    await callback.answer(
+        "✅ Условия выполнены. Проверяем доступ...",
+        show_alert=True
+    )
     else:
         needed = max(REQUIRED_REFERRALS - row["referral_count"], 0)
 
