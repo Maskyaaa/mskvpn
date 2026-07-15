@@ -382,21 +382,22 @@ async def cb_mylink(callback: CallbackQuery):
     await callback.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(
-    inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="📤 Поделиться ссылкой",
-                switch_inline_query="Я получил VPN бесплатно через MSKVPN 🔐"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="⬅️ Назад",
-                callback_data="back_menu"
-            )
-        ]
-    ]
-)      disable_web_page_preview=True
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📤 Поделиться ссылкой",
+                        url=f"https://t.me/share/url?url=https://t.me/{await get_bot_username()}?start=ref{user_id}&text=Я получил VPN бесплатно через MSKVPN 🔐"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Назад",
+                        callback_data="back_menu"
+                    )
+                ]
+            ]
+        ),
+        disable_web_page_preview=True
     )
 
     await callback.answer()
