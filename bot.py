@@ -291,7 +291,7 @@ async def build_status_text(user_id: int, username: str) -> str:
     subscribed = await is_subscribed(user_id)
 
     if needed > 0:
-    progress = min(row["referral_count"], REQUIRED_REFERRALS)
+        progress = min(row["referral_count"], REQUIRED_REFERRALS)
 
     bar = "🟩" * progress + "⬜" * (REQUIRED_REFERRALS - progress)
 
