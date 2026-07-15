@@ -614,7 +614,7 @@ async def cb_support(callback: CallbackQuery):
         "🆘 Поддержка\n\n"
         "Если возникли проблемы с подключением VPN:\n\n"
         "Напишите нам:\n"
-        "@ТВОЙ_USERNAME\n\n"
+        "@mskvpn_support \n\n"
         "Мы поможем разобраться ❤️",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
