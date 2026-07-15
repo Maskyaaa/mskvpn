@@ -423,34 +423,33 @@ async def cb_get_vpn(callback: CallbackQuery):
 
     if row["referral_count"] < REQUIRED_REFERRALS:
 
-        left = REQUIRED_REFERRALS - row["referral_count"]
+    left = REQUIRED_REFERRALS - row["referral_count"]
 
-        await callback.answer()
+    await callback.answer()
 
-        await callback.message.edit_text(
-            f"🎁 Получение VPN\n\n"
-            f"❌ Пока недостаточно приглашений.\n\n"
-            f"👥 Приглашено: {row['referral_count']}/{REQUIRED_REFERRALS}\n"
-            f"📈 Осталось: {left}",
-            reply_markup=main_menu_kb()
-        )
-
-        return
-
-    await callback.answer(
-        "✅ Условия выполнены. Проверяем доступ...",
-        show_alert=True
+    await callback.message.edit_text(
+        f"🎁 Получение VPN\n\n"
+        f"❌ Пока недостаточно приглашений.\n\n"
+        f"👥 Приглашено: {row['referral_count']}/{REQUIRED_REFERRALS}\n"
+        f"📈 Осталось: {left}",
+        reply_markup=main_menu_kb()
     )
-        else:
-        needed = max(REQUIRED_REFERRALS - row["referral_count"], 0)
 
-        text = (
-            "🎁 Получение VPN\n\n"
-            f"👥 Приглашено друзей: {row['referral_count']}/{REQUIRED_REFERRALS}\n\n"
-            f"📌 Осталось пригласить: {needed}\n\n"
-            "Используй свою ссылку ниже 👇"
-        )
+    return
 
+await callback.answer(
+    "✅ Условия выполнены. Проверяем доступ...",
+    show_alert=True
+)
+
+    #needed = max(REQUIRED_REFERRALS - row["referral_count"], 0)
+
+    text = (
+    "🎁 Получение VPN\n\n"
+    f"👥 Приглашено друзей: {row['referral_count']}/{REQUIRED_REFERRALS}\n\n"
+    f"📌 Осталось пригласить: {needed}\n\n"
+    "Используй свою ссылку ниже 👇"
+)
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
