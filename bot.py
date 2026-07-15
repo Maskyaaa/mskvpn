@@ -291,19 +291,17 @@ async def build_status_text(user_id: int, username: str) -> str:
     subscribed = await is_subscribed(user_id)
 
     if needed > 0:
-        text = (
-            f"📊 Приглашено друзей: {row['referral_count']}/{REQUIRED_REFERRALS}\n"
-            f"Ещё нужно: {needed}, чтобы получить доступ на {LINK_DURATION_DAYS} дн."
-        )
-        if REQUIRE_SUBSCRIPTION and not subscribed:
-            text += "\n\n📰 И не забудь подписаться на канал — это тоже обязательное условие."
-        return text
+    progress = min(row["referral_count"], REQUIRED_REFERRALS)
 
-    if REQUIRE_SUBSCRIPTION and not subscribed:
-        return (
-            "📰 Друзья приглашены! Осталось подписаться на новостной канал, "
-            "чтобы получить доступ."
-        )
+    bar = "🟩" * progress + "⬜" * (REQUIRED_REFERRALS - progress)
+
+    return (
+        f"🎁 Твой прогресс MSKVPN\n\n"
+        f"👥 Приглашено: {row['referral_count']}/{REQUIRED_REFERRALS}\n"
+        f"{bar}\n\n"
+        f"📈 Осталось пригласить: {needed}\n\n"
+        f"🔗 Нажми «Пригласить друзей» и поделись своей ссылкой."
+    )
 
     await try_auto_issue(user_id)
     return "🎁 Все условия выполнены! Держи новую ссылку — нажми «Мой статус» ещё раз."
