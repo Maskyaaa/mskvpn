@@ -378,14 +378,14 @@ async def cb_mylink(callback: CallbackQuery):
         )
 
     text = await build_mylink_text(user_id)
-    
+
     bot_username = await get_bot_username()
 
-share_link = (
-    f"https://t.me/share/url?"
-    f"url=https://t.me/{bot_username}?start=ref{user_id}"
-    f"&text=Я получил VPN бесплатно через MSKVPN 🔐"
-)
+    share_link = (
+        f"https://t.me/share/url?"
+        f"url=https://t.me/{bot_username}?start=ref{user_id}"
+        f"&text=Я получил VPN бесплатно через MSKVPN 🔐"
+    )
 
     await callback.message.edit_text(
         text,
@@ -393,9 +393,9 @@ share_link = (
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-    text="📤 Поделиться ссылкой",
-    url=share_link
-)
+                        text="📤 Поделиться ссылкой",
+                        url=share_link
+                    )
                 ],
                 [
                     InlineKeyboardButton(
