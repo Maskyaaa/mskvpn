@@ -19,7 +19,7 @@ from aiogram.client.default import DefaultBotProperties
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ВСТАВЬ_СЮДА_ТОКЕН_ОТ_BOTFATHER")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "ВСТАВЬ_СВОЙ_TELEGRAM_ID").split(",") if x.strip().isdigit()]
-REQUIRED_REFERRALS = int(os.getenv("REQUIRED_REFERRALS", "1"))   # сколько друзей нужно пригласить за 1 ссылку
+REQUIRED_REFERRALS = int(os.getenv("REQUIRED_REFERRALS", "3"))   # сколько друзей нужно пригласить за 1 ссылку
 LINK_DURATION_DAYS = int(os.getenv("LINK_DURATION_DAYS", "2"))  # на сколько дней выдаётся ссылка
 DB_PATH = os.getenv("DB_PATH", "vpnbot.db")
 
