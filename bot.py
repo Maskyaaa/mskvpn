@@ -183,59 +183,24 @@ async def is_subscribed(user_id: int) -> bool:
         member = await bot.get_chat_member(chat_id=NEWS_CHANNEL_ID, user_id=user_id)
         return member.status in ("member", "administrator", "creator")
     except Exception:
-        # если бот не админ канала или ID неверный — не блокируем пользователей из-за ошибки настройки
         logging.warning("Не удалось проверить подписку на канал, пропускаем проверку")
         return True
 
 
 def main_menu_kb() -> InlineKeyboardMarkup:
     buttons = [
+        [InlineKeyboardButton(text="🎁 Получить VPN", callback_data="get_vpn")],
         [
-            InlineKeyboardButton(
-                text="🎁 Получить VPN",
-                callback_data="get_vpn"
-            )
+            InlineKeyboardButton(text="📊 Мой статус", callback_data="status"),
+            InlineKeyboardButton(text="🔗 Моя ссылка", callback_data="mylink"),
         ],
-        [
-            InlineKeyboardButton(
-                text="📊 Мой статус",
-                callback_data="status"
-            ),
-            InlineKeyboardButton(
-                text="🔗 Моя ссылка",
-                callback_data="mylink"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="📱 Как подключить VPN",
-                callback_data="how_connect"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🆘 Поддержка",
-                callback_data="support"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="💛 Поддержать проект",
-                callback_data="donate"
-            )
-        ],
+        [InlineKeyboardButton(text="📱 Как подключить VPN", callback_data="how_connect")],
+        [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+        [InlineKeyboardButton(text="💛 Поддержать проект", callback_data="donate")],
     ]
 
     if NEWS_CHANNEL_URL:
-        buttons.insert(
-            4,
-            [
-                InlineKeyboardButton(
-                    text="📰 Новости канала",
-                    url=NEWS_CHANNEL_URL
-                )
-            ]
-        )
+        buttons.insert(4, [InlineKeyboardButton(text="📰 Новости канала", url=NEWS_CHANNEL_URL)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -247,22 +212,17 @@ def subscribe_kb() -> InlineKeyboardMarkup:
     buttons.append([InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
 async def build_mylink_text(user_id: int) -> str:
     bot_username = await get_bot_username()
     ref_link = f"https://t.me/{bot_username}?start=ref{user_id}"
 
     row = get_user(user_id)
-
     referrals = row["referral_count"] if row else 0
     needed = max(REQUIRED_REFERRALS - referrals, 0)
-
-    if REQUIRED_REFERRALS > 0:
-        percent = int((referrals / REQUIRED_REFERRALS) * 100)
-    else:
-        percent = 100
+    percent = int((referrals / REQUIRED_REFERRALS) * 100) if REQUIRED_REFERRALS > 0 else 100
 
     progress_count = min(referrals, REQUIRED_REFERRALS)
-
     progress = "🟩" * progress_count + "⬜" * (REQUIRED_REFERRALS - progress_count)
 
     return (
@@ -273,6 +233,7 @@ async def build_mylink_text(user_id: int) -> str:
         f"Осталось пригласить: {needed}\n\n"
         "После выполнения условий бот автоматически выдаст VPN-доступ 🚀"
     )
+
 
 async def build_status_text(user_id: int, username: str) -> str:
     row = get_user(user_id)
@@ -286,25 +247,28 @@ async def build_status_text(user_id: int, username: str) -> str:
 
     if row["current_link"]:
         clear_expired_link(user_id)
+        row = get_user(user_id)
 
     needed = max(REQUIRED_REFERRALS - row["referral_count"], 0)
     subscribed = await is_subscribed(user_id)
 
-    if needed > 0:
-        progress = min(row["referral_count"], REQUIRED_REFERRALS)
+    if needed == 0 and (not REQUIRE_SUBSCRIPTION or subscribed):
+        await try_auto_issue(user_id)
+        return "🎁 Все условия выполнены! Держи новую ссылку — нажми «Мой статус» ещё раз."
 
+    progress = min(row["referral_count"], REQUIRED_REFERRALS)
     bar = "🟩" * progress + "⬜" * (REQUIRED_REFERRALS - progress)
 
-    return (
+    text = (
         f"🎁 Твой прогресс MSKVPN\n\n"
         f"👥 Приглашено: {row['referral_count']}/{REQUIRED_REFERRALS}\n"
         f"{bar}\n\n"
         f"📈 Осталось пригласить: {needed}\n\n"
         f"🔗 Нажми «Пригласить друзей» и поделись своей ссылкой."
     )
-
-    await try_auto_issue(user_id)
-    return "🎁 Все условия выполнены! Держи новую ссылку — нажми «Мой статус» ещё раз."
+    if REQUIRE_SUBSCRIPTION and not subscribed:
+        text += "\n\n📰 И не забудь подписаться на канал — это тоже обязательное условие."
+    return text
 
 
 # ========== ХЕНДЛЕРЫ ==========
@@ -331,10 +295,9 @@ async def cmd_start(message: Message):
         try:
             await bot.send_message(
                 referred_by,
-                f"🎉 Новый участник!\n\n"
-f"👤 Кто-то присоединился по твоей ссылке.\n\n"
-f"📊 Твой прогресс:\n"
-f"{new_count}/{REQUIRED_REFERRALS} приглашений ✅",
+                "🎉 Новый участник!\n\n"
+                "👤 Кто-то присоединился по твоей ссылке.\n\n"
+                f"📊 Твой прогресс:\n{new_count}/{REQUIRED_REFERRALS} приглашений ✅",
             )
         except Exception:
             pass
@@ -364,21 +327,15 @@ async def cmd_status(message: Message):
     text = await build_status_text(user_id, username)
     await message.answer(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
 
+
 @dp.callback_query(F.data == "mylink")
 async def cb_mylink(callback: CallbackQuery):
     user_id = callback.from_user.id
-
     if get_user(user_id) is None:
-        create_user(
-            user_id,
-            callback.from_user.username or callback.from_user.full_name,
-            None
-        )
+        create_user(user_id, callback.from_user.username or callback.from_user.full_name, None)
 
     text = await build_mylink_text(user_id)
-
     bot_username = await get_bot_username()
-
     share_link = (
         f"https://t.me/share/url?"
         f"url=https://t.me/{bot_username}?start=ref{user_id}"
@@ -389,24 +346,14 @@ async def cb_mylink(callback: CallbackQuery):
         text,
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="📤 Поделиться ссылкой",
-                        url=share_link
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад",
-                        callback_data="back_menu"
-                    )
-                ]
+                [InlineKeyboardButton(text="📤 Поделиться ссылкой", url=share_link)],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_menu")],
             ]
         ),
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
     )
-
     await callback.answer()
+
 
 @dp.callback_query(F.data == "status")
 async def cb_status(callback: CallbackQuery):
@@ -416,111 +363,83 @@ async def cb_status(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
     await callback.answer()
 
+
 @dp.callback_query(F.data == "get_vpn")
 async def cb_get_vpn(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.full_name
+    row = get_user(user_id)
+    if row is None:
+        create_user(user_id, username, None)
+        row = get_user(user_id)
 
-    row = get_user(callback.from_user.id)
+    # Если уже есть активная ссылка — просто показываем её
+    link, remaining = link_status(row)
+    if link:
+        await callback.answer()
+        await callback.message.edit_text(
+            f"✅ Твоя ссылка активна ещё {fmt_timedelta(remaining)}:\n<code>{link}</code>",
+            reply_markup=main_menu_kb(),
+            disable_web_page_preview=True,
+        )
+        return
 
-    if row["referral_count"] < REQUIRED_REFERRALS:
+    needed = max(REQUIRED_REFERRALS - row["referral_count"], 0)
+    subscribed = await is_subscribed(user_id)
 
-    left = REQUIRED_REFERRALS - row["referral_count"]
-
-    await callback.answer()
-
-    await callback.message.edit_text(
-        f"🎁 Получение VPN\n\n"
-        f"❌ Пока недостаточно приглашений.\n\n"
-        f"👥 Приглашено: {row['referral_count']}/{REQUIRED_REFERRALS}\n"
-        f"📈 Осталось: {left}",
-        reply_markup=main_menu_kb()
-    )
-
-    return
-
-await callback.answer(
-    "✅ Условия выполнены. Проверяем доступ...",
-    show_alert=True
-)
-
-    #needed = max(REQUIRED_REFERRALS - row["referral_count"], 0)
-
-    text = (
-    "🎁 Получение VPN\n\n"
-    f"👥 Приглашено друзей: {row['referral_count']}/{REQUIRED_REFERRALS}\n\n"
-    f"📌 Осталось пригласить: {needed}\n\n"
-    "Используй свою ссылку ниже 👇"
-)
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🔗 Моя ссылка",
-                    callback_data="mylink"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data="back_menu"
-                )
-            ]
+    # Не хватает рефералов или подписки — показываем, чего не хватает
+    if needed > 0 or (REQUIRE_SUBSCRIPTION and not subscribed):
+        await callback.answer()
+        lines = [
+            "🎁 Получение VPN\n",
+            f"👥 Приглашено: {row['referral_count']}/{REQUIRED_REFERRALS}",
         ]
-    )
+        if needed > 0:
+            lines.append(f"📈 Осталось пригласить: {needed}")
+        if REQUIRE_SUBSCRIPTION and not subscribed:
+            lines.append("📰 Нужно подписаться на канал")
+        await callback.message.edit_text(
+            "\n".join(lines),
+            reply_markup=main_menu_kb(),
+        )
+        return
 
-    await callback.message.edit_text(
-        text,
-        reply_markup=keyboard,
-        disable_web_page_preview=True
-    )
+    # Все условия выполнены — выдаём ссылку
+    await callback.answer("✅ Условия выполнены. Проверяем доступ...", show_alert=True)
+    await try_auto_issue(user_id)
 
-    await callback.answer()
+    row = get_user(user_id)
+    link, remaining = link_status(row)
+    if link:
+        text = f"🎉 Готово! Твоя VPN-ссылка (действует {LINK_DURATION_DAYS} дн.):\n<code>{link}</code>"
+    else:
+        text = "⏳ Все условия выполнены, но свободных ссылок пока нет. Как только админ добавит новые — пришлём автоматически."
+
+    await callback.message.edit_text(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
+
 
 @dp.callback_query(F.data == "back_menu")
 async def cb_back_menu(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "🏠 Главное меню",
-        reply_markup=main_menu_kb()
-    )
+    await callback.message.edit_text("🏠 Главное меню", reply_markup=main_menu_kb())
     await callback.answer()
+
 
 @dp.callback_query(F.data == "how_connect")
 async def cb_how_connect(callback: CallbackQuery):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🍎 iPhone",
-                    callback_data="connect_iphone"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🤖 Android",
-                    callback_data="connect_android"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💻 Windows",
-                    callback_data="connect_windows"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data="back_menu"
-                )
-            ],
+            [InlineKeyboardButton(text="🍎 iPhone", callback_data="connect_iphone")],
+            [InlineKeyboardButton(text="🤖 Android", callback_data="connect_android")],
+            [InlineKeyboardButton(text="💻 Windows", callback_data="connect_windows")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_menu")],
         ]
     )
-
     await callback.message.edit_text(
-        "📱 Как подключить VPN\n\n"
-        "Выбери своё устройство:",
-        reply_markup=keyboard
+        "📱 Как подключить VPN\n\nВыбери своё устройство:",
+        reply_markup=keyboard,
     )
-
     await callback.answer()
+
 
 @dp.callback_query(F.data == "connect_iphone")
 async def cb_connect_iphone(callback: CallbackQuery):
@@ -532,17 +451,11 @@ async def cb_connect_iphone(callback: CallbackQuery):
         "4️⃣ Нажми ➕ и выбери импорт из буфера обмена\n\n"
         "5️⃣ Включи подключение ✅",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад",
-                        callback_data="how_connect"
-                    )
-                ]
-            ]
-        )
+            inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="how_connect")]]
+        ),
     )
     await callback.answer()
+
 
 @dp.callback_query(F.data == "connect_android")
 async def cb_connect_android(callback: CallbackQuery):
@@ -553,15 +466,8 @@ async def cb_connect_android(callback: CallbackQuery):
         "3️⃣ Импортируй ссылку в приложение\n\n"
         "4️⃣ Нажми подключить ✅",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад",
-                        callback_data="how_connect"
-                    )
-                ]
-            ]
-        )
+            inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="how_connect")]]
+        ),
     )
     await callback.answer()
 
@@ -574,17 +480,11 @@ async def cb_connect_windows(callback: CallbackQuery):
         "2️⃣ Добавь VLESS-ссылку\n\n"
         "3️⃣ Включи подключение ✅",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад",
-                        callback_data="how_connect"
-                    )
-                ]
-            ]
-        )
+            inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="how_connect")]]
+        ),
     )
     await callback.answer()
+
 
 @dp.callback_query(F.data == "check_sub")
 async def cb_check_sub(callback: CallbackQuery):
@@ -612,26 +512,20 @@ async def cb_donate(callback: CallbackQuery):
         provider_token="",  # для Stars токен не нужен
     )
 
+
 @dp.callback_query(F.data == "support")
 async def cb_support(callback: CallbackQuery):
     await callback.message.edit_text(
         "🆘 Поддержка\n\n"
         "Если возникли проблемы с подключением VPN:\n\n"
-        "Напишите нам:\n"
-        "@mskvpn_support \n\n"
+        "Напишите нам:\n@mskvpn_support\n\n"
         "Мы поможем разобраться ❤️",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад",
-                        callback_data="back_menu"
-                    )
-                ]
-            ]
-        )
+            inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="back_menu")]]
+        ),
     )
     await callback.answer()
+
 
 @dp.pre_checkout_query()
 async def process_pre_checkout(pre_checkout_q: PreCheckoutQuery):
@@ -672,7 +566,10 @@ async def try_auto_issue(user_id: int):
             pass
     else:
         try:
-            await bot.send_message(user_id, "⏳ Все условия выполнены, но ссылки закончились. Как только админ добавит новые — ты получишь одну автоматически.")
+            await bot.send_message(
+                user_id,
+                "⏳ Все условия выполнены, но ссылки закончились. Как только админ добавит новые — ты получишь одну автоматически.",
+            )
         except Exception:
             pass
 
@@ -742,10 +639,7 @@ async def cmd_users(message: Message):
         link, remaining = link_status(row)
         uname = f"@{row['username']}" if row["username"] and not row["username"].isdigit() else row["username"] or "—"
         status = f"🟢 ссылка активна ({fmt_timedelta(remaining)})" if link else "⚪ нет активной ссылки"
-        lines.append(
-            f"• <code>{row['user_id']}</code> {uname}\n"
-            f"  рефералов: {row['referral_count']} | {status}"
-        )
+        lines.append(f"• <code>{row['user_id']}</code> {uname}\n  рефералов: {row['referral_count']} | {status}")
 
     lines.append(f"\nСледующая страница: /users {page + 1}")
     await message.answer("\n".join(lines), disable_web_page_preview=True)
