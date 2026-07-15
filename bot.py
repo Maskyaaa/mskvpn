@@ -251,11 +251,27 @@ async def build_mylink_text(user_id: int) -> str:
     bot_username = await get_bot_username()
     ref_link = f"https://t.me/{bot_username}?start=ref{user_id}"
 
+    row = get_user(user_id)
+
+    referrals = row["referral_count"] if row else 0
+    needed = max(REQUIRED_REFERRALS - referrals, 0)
+
+    if REQUIRED_REFERRALS > 0:
+        percent = int((referrals / REQUIRED_REFERRALS) * 100)
+    else:
+        percent = 100
+
+    progress_count = min(referrals, REQUIRED_REFERRALS)
+
+    progress = "🟩" * progress_count + "⬜" * (REQUIRED_REFERRALS - progress_count)
+
     return (
-        f"🔗 Твоя ссылка:\n\n"
-        f"<code>{ref_link}</code>\n\n"
-        f"👥 Пригласи {REQUIRED_REFERRALS} друга(ей)\n"
-        f"🎁 Получишь VPN на {LINK_DURATION_DAYS} дня"
+        "🎁 Твой прогресс MSKVPN\n\n"
+        f"👥 Приглашено: {referrals}/{REQUIRED_REFERRALS}\n"
+        f"{progress} {percent}%\n\n"
+        f"🔗 Твоя ссылка:\n<code>{ref_link}</code>\n\n"
+        f"Осталось пригласить: {needed}\n\n"
+        "После выполнения условий бот автоматически выдаст VPN-доступ 🚀"
     )
 
 async def build_status_text(user_id: int, username: str) -> str:
@@ -317,8 +333,10 @@ async def cmd_start(message: Message):
         try:
             await bot.send_message(
                 referred_by,
-                f"🎉 По твоей ссылке зашёл новый пользователь!\n"
-                f"Приглашено: {new_count}/{REQUIRED_REFERRALS}",
+                f"🎉 Новый участник!\n\n"
+f"👤 Кто-то присоединился по твоей ссылке.\n\n"
+f"📊 Твой прогресс:\n"
+f"{new_count}/{REQUIRED_REFERRALS} приглашений ✅",
             )
         except Exception:
             pass
@@ -364,16 +382,21 @@ async def cb_mylink(callback: CallbackQuery):
     await callback.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад",
-                        callback_data="back_menu"
-                    )
-                ]
-            ]
-        ),
-        disable_web_page_preview=True
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📤 Поделиться ссылкой",
+                switch_inline_query="Я получил VPN бесплатно через MSKVPN 🔐"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="back_menu"
+            )
+        ]
+    ]
+)      disable_web_page_preview=True
     )
 
     await callback.answer()
