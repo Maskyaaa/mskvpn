@@ -385,9 +385,9 @@ async def cb_mylink(callback: CallbackQuery):
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📤 Поделиться ссылкой",
-                        url=f"https://t.me/share/url?url=https://t.me/{await get_bot_username()}?start=ref{user_id}&text=Я получил VPN бесплатно через MSKVPN 🔐"
-                    )
+    text="📤 Поделиться ссылкой",
+    url=f"https://t.me/share/url?url=https://t.me/{await get_bot_username()}%3Fstart%3Dref{user_id}&text=Я получил VPN бесплатно через MSKVPN 🔐"
+)
                 ],
                 [
                     InlineKeyboardButton(
