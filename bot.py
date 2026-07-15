@@ -441,7 +441,7 @@ async def cb_get_vpn(callback: CallbackQuery):
         "✅ Условия выполнены. Проверяем доступ...",
         show_alert=True
     )
-    else:
+        else:
         needed = max(REQUIRED_REFERRALS - row["referral_count"], 0)
 
         text = (
