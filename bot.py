@@ -35,6 +35,16 @@ bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
 
+@dp.callback_query.middleware()
+async def ban_check_middleware(handler, event: CallbackQuery, data: dict):
+    """Блокирует забаненных пользователей от использования любых кнопок бота."""
+    row = get_user(event.from_user.id)
+    if row and row["is_banned"] and event.from_user.id not in ADMIN_IDS:
+        await event.answer("🚫 Доступ к боту ограничен.", show_alert=True)
+        return
+    return await handler(event, data)
+
+
 # ========== БАЗА ДАННЫХ ==========
 def db():
     conn = sqlite3.connect(DB_PATH)
@@ -53,7 +63,11 @@ def init_db():
             current_link TEXT,
             link_issued_at TEXT,
             joined_at TEXT,
-            is_banned INTEGER DEFAULT 0
+            is_banned INTEGER DEFAULT 0,
+            total_referrals_ever INTEGER DEFAULT 0,
+            links_received_total INTEGER DEFAULT 0,
+            expire_notified INTEGER DEFAULT 0,
+            last_seen TEXT
         )
     """)
     conn.execute("""
@@ -63,15 +77,33 @@ def init_db():
             added_at TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            event_type TEXT,
+            details TEXT,
+            created_at TEXT
+        )
+    """)
     conn.commit()
     conn.close()
-    # На случай, если таблица users уже существовала без колонки is_banned
+    # На случай, если таблица users уже существовала без новых колонок —
+    # добавляем их по одной, игнорируя ошибку "колонка уже есть"
+    new_columns = [
+        ("is_banned", "INTEGER DEFAULT 0"),
+        ("total_referrals_ever", "INTEGER DEFAULT 0"),
+        ("links_received_total", "INTEGER DEFAULT 0"),
+        ("expire_notified", "INTEGER DEFAULT 0"),
+        ("last_seen", "TEXT"),
+    ]
     conn2 = db()
-    try:
-        conn2.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0")
-        conn2.commit()
-    except sqlite3.OperationalError:
-        pass  # колонка уже есть
+    for col_name, col_type in new_columns:
+        try:
+            conn2.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+            conn2.commit()
+        except sqlite3.OperationalError:
+            pass  # колонка уже есть
     conn2.close()
 
 
@@ -198,6 +230,89 @@ def top_referrers(limit: int = 10):
     return rows
 
 
+def log_event(user_id: int, event_type: str, details: str = ""):
+    conn = db()
+    conn.execute(
+        "INSERT INTO events (user_id, event_type, details, created_at) VALUES (?,?,?,?)",
+        (user_id, event_type, details, datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def touch_last_seen(user_id: int):
+    conn = db()
+    conn.execute("UPDATE users SET last_seen=? WHERE user_id=?", (datetime.utcnow().isoformat(), user_id))
+    conn.commit()
+    conn.close()
+
+
+def increment_total_referrals(user_id: int):
+    conn = db()
+    conn.execute("UPDATE users SET total_referrals_ever = total_referrals_ever + 1 WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def increment_links_received(user_id: int):
+    conn = db()
+    conn.execute("UPDATE users SET links_received_total = links_received_total + 1 WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def set_expire_notified(user_id: int, value: bool):
+    conn = db()
+    conn.execute("UPDATE users SET expire_notified=? WHERE user_id=?", (1 if value else 0, user_id))
+    conn.commit()
+    conn.close()
+
+
+def users_needing_expiry_warning(hours_before: int = 4):
+    """Находит пользователей, чья ссылка истекает в ближайшие hours_before часов,
+    но уведомление ещё не отправлено."""
+    conn = db()
+    rows = conn.execute(
+        "SELECT * FROM users WHERE current_link IS NOT NULL AND link_issued_at IS NOT NULL AND expire_notified = 0"
+    ).fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        issued = datetime.fromisoformat(row["link_issued_at"])
+        expires = issued + timedelta(days=LINK_DURATION_DAYS)
+        remaining = expires - datetime.utcnow()
+        if timedelta(0) < remaining <= timedelta(hours=hours_before):
+            result.append(row)
+    return result
+
+
+def stats_new_users(days: int) -> int:
+    conn = db()
+    since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    row = conn.execute("SELECT COUNT(*) as c FROM users WHERE joined_at >= ?", (since,)).fetchone()
+    conn.close()
+    return row["c"]
+
+
+def stats_active_links() -> int:
+    conn = db()
+    rows = conn.execute("SELECT * FROM users WHERE current_link IS NOT NULL AND link_issued_at IS NOT NULL").fetchall()
+    conn.close()
+    count = 0
+    for row in rows:
+        link, remaining = link_status(row)
+        if link:
+            count += 1
+    return count
+
+
+def stats_banned_count() -> int:
+    conn = db()
+    row = conn.execute("SELECT COUNT(*) as c FROM users WHERE is_banned = 1").fetchone()
+    conn.close()
+    return row["c"]
+
+
 # ========== ВСПОМОГАТЕЛЬНОЕ ==========
 def link_status(user_row) -> tuple[str | None, timedelta | None]:
     """Возвращает (ссылка, оставшееся_время) если ссылка ещё активна, иначе (None, None)."""
@@ -232,6 +347,27 @@ async def is_subscribed(user_id: int) -> bool:
     except Exception:
         logging.warning("Не удалось проверить подписку на канал, пропускаем проверку")
         return True
+
+
+async def notify_admins(text: str):
+    """Отправляет сообщение всем админам из ADMIN_IDS (например, при критической ошибке)."""
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, text, disable_web_page_preview=True)
+        except Exception:
+            pass
+
+
+@dp.error()
+async def global_error_handler(event):
+    """Ловит необработанные ошибки в хендлерах и присылает админам, чтобы не пропустить сбой."""
+    exception = event.exception
+    logging.exception("Необработанная ошибка в хендлере")
+    try:
+        await notify_admins(f"⚠️ Ошибка в боте:\n<code>{type(exception).__name__}: {exception}</code>")
+    except Exception:
+        pass
+    return True
 
 
 def main_menu_kb() -> InlineKeyboardMarkup:
@@ -341,9 +477,12 @@ async def cmd_start(message: Message):
 
     is_new = get_user(user_id) is None
     create_user(user_id, username, referred_by)
+    touch_last_seen(user_id)
 
     if is_new and referred_by:
         new_count = increment_referral(referred_by)
+        increment_total_referrals(referred_by)
+        log_event(referred_by, "referral_joined", f"new_user={user_id}")
         try:
             await bot.send_message(
                 referred_by,
@@ -354,6 +493,9 @@ async def cmd_start(message: Message):
         except Exception:
             pass
         await try_auto_issue(referred_by)
+
+    if is_new:
+        log_event(user_id, "start", f"referred_by={referred_by}")
 
     greeting = "👋 Привет! Здесь можно получить доступ бесплатно — просто пригласи друзей."
     if REQUIRE_SUBSCRIPTION:
@@ -378,6 +520,23 @@ async def cmd_status(message: Message):
     username = message.from_user.username or message.from_user.full_name
     text = await build_status_text(user_id, username)
     await message.answer(text, reply_markup=main_menu_kb(), disable_web_page_preview=True)
+
+
+@dp.message(Command("mystats"))
+async def cmd_mystats(message: Message):
+    """Личная статистика пользователя за всё время (не сбрасывается при получении ссылки)."""
+    user_id = message.from_user.id
+    row = get_user(user_id)
+    if row is None:
+        create_user(user_id, message.from_user.username or message.from_user.full_name, None)
+        row = get_user(user_id)
+
+    await message.answer(
+        "📈 Твоя статистика за всё время\n\n"
+        f"👥 Всего приглашено друзей: {row['total_referrals_ever']}\n"
+        f"🔗 Всего получено VPN-ссылок: {row['links_received_total']}\n"
+        f"📅 В боте с: {row['joined_at'][:10]}"
+    )
 
 
 @dp.callback_query(F.data == "mylink")
@@ -608,6 +767,9 @@ async def try_auto_issue(user_id: int):
     new_link = pop_link_from_pool()
     if new_link:
         issue_link_to_user(user_id, new_link)
+        set_expire_notified(user_id, False)
+        increment_links_received(user_id)
+        log_event(user_id, "link_issued", new_link[:50])
         try:
             await bot.send_message(
                 user_id,
@@ -617,6 +779,7 @@ async def try_auto_issue(user_id: int):
         except Exception:
             pass
     else:
+        log_event(user_id, "pool_empty")
         try:
             await bot.send_message(
                 user_id,
@@ -624,6 +787,28 @@ async def try_auto_issue(user_id: int):
             )
         except Exception:
             pass
+
+
+async def expiry_watcher():
+    """Фоновая задача: раз в 30 минут проверяет, у кого скоро истекает VPN-ссылка,
+    и присылает предупреждение, чтобы человек успел пригласить друга и продлить доступ."""
+    while True:
+        try:
+            rows = users_needing_expiry_warning(hours_before=4)
+            for row in rows:
+                try:
+                    await bot.send_message(
+                        row["user_id"],
+                        "⏰ Твоя VPN-ссылка скоро перестанет действовать (менее 4 часов)!\n\n"
+                        "Пригласи друга прямо сейчас, чтобы автоматически получить новую ссылку без перерыва в доступе.",
+                        reply_markup=main_menu_kb(),
+                    )
+                    set_expire_notified(row["user_id"], True)
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.warning(f"Ошибка в expiry_watcher: {e}")
+        await asyncio.sleep(30 * 60)  # раз в 30 минут
 
 
 # ========== АДМИН-КОМАНДЫ ==========
@@ -663,11 +848,15 @@ async def cmd_stats(message: Message):
     if not is_admin(message.from_user.id):
         return
     await message.answer(
-        f"📊 Статистика:\n"
-        f"Пользователей: {total_users()}\n"
-        f"Свободных ссылок в пуле: {pool_count()}\n"
-        f"Нужно рефералов за ссылку: {REQUIRED_REFERRALS}\n"
-        f"Срок действия ссылки: {LINK_DURATION_DAYS} дн."
+        f"📊 Статистика бота\n\n"
+        f"👥 Всего пользователей: {total_users()}\n"
+        f"🆕 Новых за 24ч: {stats_new_users(1)}\n"
+        f"🆕 Новых за 7 дней: {stats_new_users(7)}\n"
+        f"🟢 Активных VPN-ссылок сейчас: {stats_active_links()}\n"
+        f"🚫 Забанено: {stats_banned_count()}\n\n"
+        f"🔗 Свободных ссылок в пуле: {pool_count()}\n"
+        f"⚙️ Нужно рефералов за ссылку: {REQUIRED_REFERRALS}\n"
+        f"⏱ Срок действия ссылки: {LINK_DURATION_DAYS} дн."
     )
 
 
@@ -912,7 +1101,10 @@ async def cmd_help(message: Message):
         "(или ответь /broadcast на фото/видео — разошлёт как есть)\n\n"
         "⚙️ Настройки:\n"
         "/setrequired <число> — сколько рефералов нужно за ссылку\n"
-        "/stats — общая статистика"
+        "/stats — расширенная статистика (новые, активные, забаненные)\n\n"
+        "ℹ️ Автоматика:\n"
+        "— Бот сам предупреждает пользователей за 4 часа до истечения ссылки\n"
+        "— Все критические ошибки бот присылает тебе в личку автоматически"
     )
 
 
@@ -920,6 +1112,7 @@ async def cmd_help(message: Message):
 async def main():
     init_db()
     logging.info("Бот запущен, начинаем polling...")
+    asyncio.create_task(expiry_watcher())
     await dp.start_polling(bot)
 
 
