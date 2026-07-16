@@ -52,7 +52,8 @@ def init_db():
             referral_count INTEGER DEFAULT 0,
             current_link TEXT,
             link_issued_at TEXT,
-            joined_at TEXT
+            joined_at TEXT,
+            is_banned INTEGER DEFAULT 0
         )
     """)
     conn.execute("""
@@ -64,6 +65,14 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+    # На случай, если таблица users уже существовала без колонки is_banned
+    conn2 = db()
+    try:
+        conn2.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0")
+        conn2.commit()
+    except sqlite3.OperationalError:
+        pass  # колонка уже есть
+    conn2.close()
 
 
 def get_user(user_id: int):
@@ -146,6 +155,44 @@ def get_all_users(limit: int = 50, offset: int = 0):
     conn = db()
     rows = conn.execute(
         "SELECT * FROM users ORDER BY joined_at DESC LIMIT ? OFFSET ?", (limit, offset)
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def get_all_user_ids(only_active: bool = True):
+    conn = db()
+    if only_active:
+        rows = conn.execute("SELECT user_id FROM users WHERE is_banned = 0").fetchall()
+    else:
+        rows = conn.execute("SELECT user_id FROM users").fetchall()
+    conn.close()
+    return [r["user_id"] for r in rows]
+
+
+def set_banned(user_id: int, banned: bool):
+    conn = db()
+    conn.execute("UPDATE users SET is_banned=? WHERE user_id=?", (1 if banned else 0, user_id))
+    conn.commit()
+    conn.close()
+
+
+def find_user(query: str):
+    """Ищет пользователя по числовому ID или по username (с @ или без)."""
+    conn = db()
+    query = query.strip().lstrip("@")
+    if query.isdigit():
+        row = conn.execute("SELECT * FROM users WHERE user_id=?", (int(query),)).fetchone()
+    else:
+        row = conn.execute("SELECT * FROM users WHERE username=?", (query,)).fetchone()
+    conn.close()
+    return row
+
+
+def top_referrers(limit: int = 10):
+    conn = db()
+    rows = conn.execute(
+        "SELECT * FROM users ORDER BY referral_count DESC LIMIT ?", (limit,)
     ).fetchall()
     conn.close()
     return rows
@@ -276,6 +323,11 @@ async def build_status_text(user_id: int, username: str) -> str:
 async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or message.from_user.full_name
+
+    existing = get_user(user_id)
+    if existing and existing["is_banned"]:
+        await message.answer("🚫 Доступ к боту ограничен.")
+        return
 
     args = message.text.split(maxsplit=1)
     referred_by = None
@@ -656,6 +708,212 @@ async def cmd_setrequired(message: Message):
         return
     REQUIRED_REFERRALS = int(args[1].strip())
     await message.answer(f"✅ Теперь нужно {REQUIRED_REFERRALS} реферал(ов) за ссылку.")
+
+
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: Message):
+    """Рассылка сообщения всем пользователям бота. Поддерживает текст, фото, видео — просто
+    ответь этой командой на сообщение, которое хочешь разослать, или напиши текст сразу после команды."""
+    if not is_admin(message.from_user.id):
+        return
+
+    source = message.reply_to_message if message.reply_to_message else message
+    args = message.text.split(maxsplit=1)
+    text_only = args[1] if len(args) > 1 else None
+
+    if not message.reply_to_message and not text_only:
+        await message.answer(
+            "Использование:\n"
+            "1) /broadcast Текст сообщения — разошлёт текст всем\n"
+            "2) Ответь командой /broadcast на любое сообщение (фото/видео/текст) — разошлёт его копией всем"
+        )
+        return
+
+    user_ids = get_all_user_ids(only_active=True)
+    status_msg = await message.answer(f"🚀 Начинаю рассылку для {len(user_ids)} пользователей...")
+
+    sent, failed = 0, 0
+    for uid in user_ids:
+        try:
+            if message.reply_to_message:
+                await message.reply_to_message.copy_to(uid)
+            else:
+                await bot.send_message(uid, text_only)
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)  # чтобы не упереться в лимиты Telegram (~20 сообщений/сек)
+
+    await status_msg.edit_text(f"✅ Рассылка завершена.\nДоставлено: {sent}\nНе доставлено: {failed}")
+
+
+@dp.message(Command("user"))
+async def cmd_user_card(message: Message):
+    """Показывает подробную карточку одного пользователя по ID или username."""
+    if not is_admin(message.from_user.id):
+        return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("Использование: /user 123456789  или  /user @username")
+        return
+
+    row = find_user(args[1])
+    if row is None:
+        await message.answer("Пользователь не найден.")
+        return
+
+    link, remaining = link_status(row)
+    link_info = f"🟢 активна ещё {fmt_timedelta(remaining)}\n<code>{link}</code>" if link else "⚪ нет активной ссылки"
+    uname = f"@{row['username']}" if row["username"] and not str(row["username"]).isdigit() else (row["username"] or "—")
+    ban_status = "🚫 забанен" if row["is_banned"] else "✅ активен"
+
+    text = (
+        f"👤 Карточка пользователя\n\n"
+        f"ID: <code>{row['user_id']}</code>\n"
+        f"Username: {uname}\n"
+        f"Статус: {ban_status}\n"
+        f"Приглашено рефералов: {row['referral_count']}\n"
+        f"Пригласил: {row['referred_by'] or '—'}\n"
+        f"Зарегистрирован: {row['joined_at']}\n"
+        f"VPN-ссылка: {link_info}"
+    )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🚫 Забанить" if not row["is_banned"] else "✅ Разбанить",
+                    callback_data=f"toggleban_{row['user_id']}",
+                )
+            ]
+        ]
+    )
+    await message.answer(text, reply_markup=keyboard, disable_web_page_preview=True)
+
+
+@dp.callback_query(F.data.startswith("toggleban_"))
+async def cb_toggle_ban(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+    target_id = int(callback.data.split("_", 1)[1])
+    row = get_user(target_id)
+    if row is None:
+        await callback.answer("Пользователь не найден.", show_alert=True)
+        return
+
+    new_state = not bool(row["is_banned"])
+    set_banned(target_id, new_state)
+    await callback.answer("🚫 Забанен" if new_state else "✅ Разбанен", show_alert=True)
+
+    updated = get_user(target_id)
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Разбанить" if new_state else "🚫 Забанить",
+                    callback_data=f"toggleban_{target_id}",
+                )
+            ]
+        ]
+    )
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
+
+
+@dp.message(Command("ban"))
+async def cmd_ban(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("Использование: /ban 123456789")
+        return
+    row = find_user(args[1])
+    if row is None:
+        await message.answer("Пользователь не найден.")
+        return
+    set_banned(row["user_id"], True)
+    await message.answer(f"🚫 Пользователь {row['user_id']} забанен.")
+
+
+@dp.message(Command("unban"))
+async def cmd_unban(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("Использование: /unban 123456789")
+        return
+    row = find_user(args[1])
+    if row is None:
+        await message.answer("Пользователь не найден.")
+        return
+    set_banned(row["user_id"], False)
+    await message.answer(f"✅ Пользователь {row['user_id']} разбанен.")
+
+
+@dp.message(Command("top"))
+async def cmd_top(message: Message):
+    """Топ пользователей по количеству приглашённых рефералов."""
+    if not is_admin(message.from_user.id):
+        return
+    rows = top_referrers(10)
+    if not rows:
+        await message.answer("Пока пусто.")
+        return
+    medals = ["🥇", "🥈", "🥉"] + ["▪️"] * 10
+    lines = ["🏆 Топ приглашающих:\n"]
+    for i, row in enumerate(rows):
+        uname = f"@{row['username']}" if row["username"] and not str(row["username"]).isdigit() else (row["username"] or row["user_id"])
+        lines.append(f"{medals[i]} {uname} — {row['referral_count']} реф.")
+    await message.answer("\n".join(lines))
+
+
+@dp.message(Command("export"))
+async def cmd_export(message: Message):
+    """Выгружает всех пользователей в CSV-файл и присылает админу."""
+    if not is_admin(message.from_user.id):
+        return
+    import csv
+    import io
+    from aiogram.types import BufferedInputFile
+
+    rows = get_all_users(limit=100000, offset=0)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["user_id", "username", "referral_count", "referred_by", "joined_at", "is_banned"])
+    for row in rows:
+        writer.writerow([row["user_id"], row["username"], row["referral_count"], row["referred_by"], row["joined_at"], row["is_banned"]])
+
+    file_bytes = buf.getvalue().encode("utf-8-sig")
+    await message.answer_document(
+        BufferedInputFile(file_bytes, filename="users_export.csv"),
+        caption=f"📄 Экспорт {len(rows)} пользователей.",
+    )
+
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer(
+        "🛠 Админ-команды\n\n"
+        "👥 Пользователи:\n"
+        "/users [страница] — список пользователей\n"
+        "/user <id или @username> — карточка пользователя\n"
+        "/ban <id или @username> — забанить\n"
+        "/unban <id или @username> — разбанить\n"
+        "/top — топ приглашающих\n"
+        "/export — выгрузить всех в CSV\n\n"
+        "🔗 Ссылки:\n"
+        "/addlink <ссылка> — добавить одну\n"
+        "/addlinks — добавить пачкой (каждая с новой строки)\n\n"
+        "📢 Рассылка:\n"
+        "/broadcast <текст> — разослать текст всем\n"
+        "(или ответь /broadcast на фото/видео — разошлёт как есть)\n\n"
+        "⚙️ Настройки:\n"
+        "/setrequired <число> — сколько рефералов нужно за ссылку\n"
+        "/stats — общая статистика"
+    )
 
 
 # ========== ЗАПУСК ==========
