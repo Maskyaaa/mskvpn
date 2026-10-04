@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: mskvpn-bot
+    runtime: python
+    plan: free
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+
+      - key: ADMIN_IDS
+        sync: false
+
+      - key: REQUIRED_REFERRALS
+        value: "3"
+
+      - key: LINK_DURATION_DAYS
+        value: "2"
+
+      - key: DB_PATH
+        value: "/tmp/vpnbot.db"
+
+      - key: WEBHOOK_PATH
+        value: "/webhook"
+
+      - key: WEBHOOK_URL
+        sync: false
+
+      - key: NEWS_CHANNEL_URL
+        value: ""
+
+      - key: NEWS_CHANNEL_ID
+        value: ""
